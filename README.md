@@ -1,6 +1,6 @@
 # PrivacyWatch
 
-A standalone Flutter app that shows **who** is sending **what** personal data, **how**, and **when**, and lets you block it. It runs locally and does not send captured data anywhere. It is independent of the HandyAI project.
+A standalone Flutter app that shows **who** is sending **what** personal data, **how**, and **when**, and lets you block it. It runs locally and does not send captured data anywhere.
 
 Use it only on devices and networks you own or are authorized to monitor.
 
