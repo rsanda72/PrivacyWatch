@@ -62,6 +62,12 @@ Limits:
 - The Windows Firewall rule is meant to cover traffic that bypasses the proxy, but it has no effect if a third-party firewall (for example Norton) is the active firewall. In testing on a Norton 360 machine the rule was reported `NotApplicable` and direct traffic was not blocked. Add the same block in that product. PrivacyWatch warns when it detects one.
 - Blocks are saved to `%USERPROFILE%\PrivacyWatch\blocks.json` and restored on start. At startup PrivacyWatch also compares them with the real Windows Firewall rules: missing rules are dropped, and any leftover `PrivacyWatch block - ...` rules are adopted so you can unblock them. Creating a block reuses an existing rule instead of adding a duplicate, and unblocking removes every copy.
 
+## Audit snapshots
+
+The Report has a privacy score (0-100) and an **Audit** view. Tap **Snapshot** to save the current privacy state (score, destinations seen, what is blocked). The app then compares snapshots automatically: changes since your last snapshot, or between the last two that differed, shown as **Improved / More exposed / No change** with new exposures and improvements listed. Snapshots are kept in the app's data store (`audit.json`, not an exported report), survive restarts, and can be deleted individually or all at once. You can optionally pick a different pair to compare.
+
+Block changes are also appended to `blocks.log`. Blocking is by destination; app blocking is hidden for now.
+
 ## Log
 
 Every transaction is appended to `%USERPROFILE%\PrivacyWatch\transactions.jsonl` (one JSON object per line): time, severity, app and path, host, how, destination, bytes up/down, duration, tracker, and redacted matches. HTTPS tunnels are logged when they close, so byte counts are final.
