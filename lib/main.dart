@@ -17,6 +17,7 @@ class PrivacyWatchApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'PrivacyWatch',
+        debugShowCheckedModeBanner: false,
         theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
         home: const HomePage(),
       );
@@ -130,7 +131,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openReport() => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => ReportPage(liveEvents: _events, liveCount: _count, blocker: _blocker)));
+      .push(MaterialPageRoute(builder: (_) => ReportPage(liveEvents: _events, liveCount: _count, blocker: _blocker, dataDir: _dataDir)));
 
   @override
   Widget build(BuildContext context) {
@@ -160,6 +161,37 @@ class _HomePageState extends State<HomePage> {
             tooltip: 'Clear',
             icon: const Icon(Icons.delete_sweep),
             onPressed: () => setState(_events.clear),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Options',
+            onSelected: (v) {
+              switch (v) {
+                case 'report':
+                  _openReport();
+                case 'alerts':
+                  _openInbox();
+                case 'blocked':
+                  showDialog<void>(context: context, builder: (_) => BlockedAppsDialog(blocker: _blocker));
+                case 'toggle':
+                  _toggle();
+                case 'clear':
+                  setState(_events.clear);
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.analytics), title: Text('Report / Analysis'))),
+              const PopupMenuItem(value: 'alerts', child: ListTile(leading: Icon(Icons.gpp_maybe), title: Text('Critical alerts'))),
+              const PopupMenuItem(value: 'blocked', child: ListTile(leading: Icon(Icons.block), title: Text('Blocked items'))),
+              if (_supported)
+                PopupMenuItem(
+                  value: 'toggle',
+                  child: ListTile(
+                    leading: Icon(running ? Icons.stop : Icons.play_arrow),
+                    title: Text(running ? 'Stop monitoring' : 'Start monitoring'),
+                  ),
+                ),
+              const PopupMenuItem(value: 'clear', child: ListTile(leading: Icon(Icons.delete_sweep), title: Text('Clear list'))),
+            ],
           ),
         ]),
         floatingActionButton: Row(mainAxisSize: MainAxisSize.min, children: [

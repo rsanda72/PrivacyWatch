@@ -27,13 +27,28 @@ class AppBlocker {
   bool isBlocked(String? name, String? path) => apps.containsKey(keyOf(name, path));
 
   void blockHost(String host) {
-    hosts.add(host.toLowerCase());
+    final h = host.toLowerCase();
+    hosts.add(h);
+    _audit('BLOCK host $h');
     _save();
   }
 
   void unblockHost(String host) {
-    hosts.remove(host.toLowerCase());
+    final h = host.toLowerCase();
+    hosts.remove(h);
+    _audit('UNBLOCK host $h');
     _save();
+  }
+
+  /// Append-only history (blocks.log) so any change to the block list can be traced afterwards.
+  void _audit(String what) {
+    try {
+      final f = storeFile;
+      if (f == null) return;
+      File('${f.parent.path}/blocks.log').writeAsStringSync(
+          '${DateTime.now().toIso8601String()}  $what  (now ${hosts.length} hosts, ${apps.length} apps)\n',
+          mode: FileMode.append);
+    } catch (_) {}
   }
 
   bool isHostBlocked(String host) {
@@ -56,16 +71,31 @@ class AppBlocker {
   /// rules that disappeared are dropped, and PrivacyWatch rules not in the
   /// saved list (for example from an earlier session) are adopted so they can be unblocked.
   Future<void> load({bool syncFirewall = true}) async {
-    try {
-      if (storeFile != null && storeFile!.existsSync()) {
-        final j = jsonDecode(storeFile!.readAsStringSync()) as Map<String, dynamic>;
-        for (final a in (j['apps'] as List? ?? const [])) {
-          final app = BlockedApp(a['name'] as String, a['path'] as String?, firewallRule: a['firewallRule'] == true);
-          apps[keyOf(app.name, app.path)] = app;
+    var readFailed = false;
+    if (storeFile != null && storeFile!.existsSync()) {
+      // Antivirus can briefly lock the file, so retry before giving up.
+      for (var attempt = 1; attempt <= 5; attempt++) {
+        try {
+          final j = jsonDecode(storeFile!.readAsStringSync()) as Map<String, dynamic>;
+          for (final a in (j['apps'] as List? ?? const [])) {
+            final app = BlockedApp(a['name'] as String, a['path'] as String?, firewallRule: a['firewallRule'] == true);
+            apps[keyOf(app.name, app.path)] = app;
+          }
+          hosts.addAll(((j['hosts'] as List?) ?? const []).cast<String>());
+          readFailed = false;
+          _audit('LOAD ok');
+          try {
+            storeFile!.copySync('${storeFile!.path}.bak');
+          } catch (_) {}
+          break;
+        } catch (e) {
+          readFailed = true;
+          _audit('LOAD attempt $attempt failed: $e');
+          await Future<void>.delayed(const Duration(milliseconds: 300));
         }
-        hosts.addAll(((j['hosts'] as List?) ?? const []).cast<String>());
       }
-    } catch (_) {}
+    }
+    if (readFailed) return; // never overwrite saved blocks with an empty list after a failed read
     if (syncFirewall && Platform.isWindows) {
       final rules = await _firewallRules();
       if (rules != null) {
@@ -86,6 +116,7 @@ class AppBlocker {
   Future<bool> block(String name, String? path) async {
     final app = BlockedApp(name, path);
     apps[keyOf(name, path)] = app;
+    _audit('BLOCK app ${keyOf(name, path)}');
     if (!Platform.isWindows || path == null) {
       _save();
       return false;
@@ -103,6 +134,7 @@ class AppBlocker {
   /// Returns false if a firewall rule still exists afterwards (permission declined).
   Future<bool> unblock(String key) async {
     final app = apps.remove(key);
+    _audit('UNBLOCK app $key');
     _save();
     if (app == null || !app.firewallRule) return true;
     // Removing by name deletes every copy of the rule, including old duplicates.

@@ -127,12 +127,16 @@ class _CriticalAlertDialogState extends State<CriticalAlertDialog> {
             const Text('Recommended steps', style: TextStyle(fontWeight: FontWeight.bold)),
             for (var i = 0; i < steps.length; i++) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${i + 1}. ${steps[i]}')),
             const Divider(),
-            const Text('Blocking options', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Blocking', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(_impact.recommendation),
-            for (final l in _impact.impactLines) Padding(padding: const EdgeInsets.only(top: 4), child: Text('- $l')),
-            const SizedBox(height: 8),
-            const BlockingGuide(),
+            if (!kAppBlockingEnabled)
+              const Text('Block this destination to stop this data going there. The app keeps working normally.')
+            else ...[
+              Text(_impact.recommendation),
+              for (final l in _impact.impactLines) Padding(padding: const EdgeInsets.only(top: 4), child: Text('- $l')),
+              const SizedBox(height: 8),
+              const BlockingGuide(),
+            ],
               ]),
             ),
           ),
@@ -147,19 +151,20 @@ class _CriticalAlertDialogState extends State<CriticalAlertDialog> {
           },
           child: const Text('View report'),
         ),
-        OutlinedButton.icon(
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: severityColor(Severity.critical)),
           onPressed: (_busy || _hostBlocked) ? null : _blockHost,
           icon: const Icon(Icons.public_off),
           label: Text(_hostBlocked ? 'Destination blocked' : 'Block this destination'),
         ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: severityColor(Severity.critical)),
-          onPressed: (_busy || _blocked) ? null : _block,
-          icon: _busy
-              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.block),
-          label: Text(_blocked ? 'App blocked' : 'Block this app (Windows asks permission)'),
-        ),
+        if (kAppBlockingEnabled)
+          OutlinedButton.icon(
+            onPressed: (_busy || _blocked) ? null : _block,
+            icon: _busy
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.block),
+            label: Text(_blocked ? 'App blocked' : 'Block this app (Windows asks permission)'),
+          ),
       ],
     );
   }

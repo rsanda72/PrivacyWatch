@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import 'core/app_blocker.dart';
 import 'core/event.dart';
 
+/// Whole-application blocking is reserved for a later, advanced tier.
+/// Destination blocking is the only option shown while this is false.
+const kAppBlockingEnabled = false;
+
 /// General-purpose programs: many unrelated things use them, so blocking the whole program breaks legitimate use.
 const _sharedPrograms = {
   'curl.exe', 'wget.exe', 'powershell.exe', 'pwsh.exe', 'cmd.exe', 'python.exe', 'pythonw.exe', 'node.exe',
@@ -213,9 +217,11 @@ class _BlockDecisionPanelState extends State<BlockDecisionPanel> {
   @override
   Widget build(BuildContext context) {
     final a = widget.app, d = widget.dest;
-    final rec = a?.recommendation ?? d!.recommendation;
-    final lines = a?.impactLines ?? d!.impactLines;
-    final prefersApp = a?.preferApp ?? false;
+    final rec = kAppBlockingEnabled
+        ? (a?.recommendation ?? d!.recommendation)
+        : 'Blocking only the destination stops this data going there. The app itself keeps working normally.';
+    final lines = kAppBlockingEnabled ? (a?.impactLines ?? d!.impactLines) : const <String>[];
+    final prefersApp = kAppBlockingEnabled && (a?.preferApp ?? false);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _Note(Icons.lightbulb, prefersApp ? Colors.red.shade700 : Colors.blue, rec),
       for (final l in lines) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('- $l')),
@@ -229,11 +235,12 @@ class _BlockDecisionPanelState extends State<BlockDecisionPanel> {
         ]),
       ],
       const SizedBox(height: 4),
-      const ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        title: Text('App or destination - how do they differ?'),
-        children: [BlockingGuide()],
-      ),
+      if (kAppBlockingEnabled)
+        const ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: Text('App or destination - how do they differ?'),
+          children: [BlockingGuide()],
+        ),
       const Divider(),
     ]);
   }
@@ -244,11 +251,12 @@ class _BlockDecisionPanelState extends State<BlockDecisionPanel> {
     final destBtn = a.concernHosts.isEmpty
         ? null
         : _btn(
-            primary: !a.preferApp,
+            primary: !a.preferApp || !kAppBlockingEnabled,
             onPressed: allBlocked ? null : () => setState(() => a.concernHosts.forEach(b!.blockHost)),
             icon: Icons.public_off,
             label: allBlocked ? 'Destinations blocked' : 'Block ${a.concernHosts.length} concerning destination(s)',
           );
+    if (!kAppBlockingEnabled) return [?destBtn];
     final appBtn = _btn(
       primary: a.preferApp,
       onPressed: (_busy || blocked) ? null : () => _blockApp(a),
