@@ -528,9 +528,31 @@ class _ReportPageState extends State<ReportPage> {
   String _traffic(List<TransactionEvent> l) =>
       'up ${_bytes(_sum(l, (e) => e.bytesUp))}  down ${_bytes(_sum(l, (e) => e.bytesDown))}';
 
+  /// Blocked requests are refused before any data moves, so this estimates what they would have
+  /// transferred, using the average size of allowed requests to the same host (else overall).
+  int _estimatedBlockedBytes() {
+    final allowed = events.where((e) => !_isBlocked(e)).toList();
+    if (allowed.isEmpty) return 0;
+    int size(TransactionEvent e) => e.bytesUp + e.bytesDown;
+    final overall = allowed.fold<int>(0, (n, e) => n + size(e)) ~/ allowed.length;
+    final perHost = <String, List<int>>{};
+    for (final e in allowed) {
+      perHost.putIfAbsent(e.host, () => []).add(size(e));
+    }
+    var total = 0;
+    for (final e in events.where(_isBlocked)) {
+      final l = perHost[e.host];
+      total += l == null ? overall : l.fold<int>(0, (n, x) => n + x) ~/ l.length;
+    }
+    return total;
+  }
+
   Widget _trafficCard(_Agg a) {
     final up = _sum(events, (e) => e.bytesUp), down = _sum(events, (e) => e.bytesDown);
     final hosts = events.map((e) => e.host).toSet().length;
+    final blockedBytes = _estimatedBlockedBytes();
+    final blockedDest = widget.blocker?.hosts.length ?? 0;
+    final blockedApps = widget.blocker?.apps.length ?? 0;
     Widget stat(IconData i, String value, String label) => Expanded(
           child: Column(children: [
             Icon(i, size: 20, color: Colors.indigo),
@@ -570,6 +592,12 @@ class _ReportPageState extends State<ReportPage> {
               stat(Icons.arrow_downward, _bytes(down), 'downloaded'),
               stat(Icons.dns, '$hosts', 'destinations'),
               stat(Icons.computer, '${a.apps.length}', 'sources (apps)'),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              stat(Icons.shield, blockedBytes == 0 ? '0 B' : '~${_bytes(blockedBytes)}', 'blocked (est.)'),
+              stat(Icons.block, '$blockedDest', 'destinations blocked'),
+              stat(Icons.apps, '$blockedApps', 'apps blocked'),
             ]),
           ]),
         ),

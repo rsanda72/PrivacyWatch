@@ -93,7 +93,7 @@ class _AuditViewState extends State<AuditView> {
         a = snaps.firstWhere((s) => s.id == _picked.first);
         b = live;
         basis = 'Comparing ${a.id} with right now';
-      } else if (_signature(snaps.first) != _signature(live)) {
+      } else if (live.items.isNotEmpty && _signature(snaps.first) != _signature(live)) {
         a = snaps.first;
         b = live;
         basis = 'Changes since your last snapshot';
