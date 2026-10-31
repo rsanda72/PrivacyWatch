@@ -9,6 +9,19 @@ enum Severity {
   const Severity(this.label, this.rank);
   final String label;
   final int rank;
+
+  /// Plain-language meaning and suggested response for this level.
+  String get guidance => switch (this) {
+        Severity.critical =>
+          'Act now. Data that can cause financial loss or account takeover left this device. Block the app, then change any affected passwords or contact your bank.',
+        Severity.high =>
+          'Serious. Sensitive personal data was sent. Check whether you expected this app to have it; if not, block it and review its permissions.',
+        Severity.medium =>
+          'Worth a look. Ordinary identifying data was sent. This is common and often legitimate (a login, a delivery form), but if the recipient is unfamiliar or the app has no reason to know it, block or uninstall it.',
+        Severity.low =>
+          'Usually harmless on its own (for example your IP address, which every site sees). Only a concern if it repeats a lot or goes to unknown or ad companies.',
+        Severity.info => 'No personal data seen. Normal background traffic.',
+      };
 }
 
 enum PiiCategory {
@@ -35,6 +48,28 @@ enum PiiCategory {
   final String label;
   final Severity severity;
   final String explanation;
+
+  /// What to ask yourself, and what to do, when this type of data is found.
+  String get advice => switch (this) {
+        PiiCategory.email =>
+          'Expected if you are signing in, subscribing or checking out on that site. Unexpected if it goes to an ad or tracking company: that links your identity to your browsing. Consider blocking that destination.',
+        PiiCategory.phone =>
+          'Fine for a service you gave it to (delivery, 2-step login). If an ad or analytics firm receives it, it can be matched to you across services. Block that destination if unexpected.',
+        PiiCategory.ssn =>
+          'Should only go to an official, encrypted service you chose. Block immediately if unexpected and consider a credit freeze if it was sent unencrypted.',
+        PiiCategory.creditCard =>
+          'Only acceptable to a payment page over HTTPS that you used. Anything else: block the app, check your card statement and tell your bank.',
+        PiiCategory.ipAddress =>
+          'Every server you contact sees your IP, so this is normal. Only matters if sent inside data to third parties, or if it is the only thing sent repeatedly to an ad network.',
+        PiiCategory.location =>
+          'Fine for a map or weather app you are using. Unexpected otherwise: revoke the app\'s location permission and block it.',
+        PiiCategory.deviceId =>
+          'This is the ID advertisers use to follow you between apps. Reset or disable your advertising ID in system settings and block the recipient if it is an ad network.',
+        PiiCategory.credential =>
+          'A secret was sent. Normal only when you are logging in to that service over HTTPS. If it was plain HTTP or went elsewhere, change the password or revoke the key now.',
+        PiiCategory.dob =>
+          'Normal for age or identity checks you started. Unexpected elsewhere: block the recipient and review what the app asked for.',
+      };
 }
 
 class PiiMatch {

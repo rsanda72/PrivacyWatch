@@ -112,7 +112,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openReport() => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => ReportPage(liveEvents: _events, liveCount: _count)));
+      .push(MaterialPageRoute(builder: (_) => ReportPage(liveEvents: _events, liveCount: _count, blocker: _blocker)));
 
   @override
   Widget build(BuildContext context) {

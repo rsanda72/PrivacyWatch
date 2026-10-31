@@ -64,6 +64,27 @@ class TrackerClassifier {
     'tr.snapchat.com': TrackerInfo('Snap', 'Advertising'),
   };
 
+  static const categoryOrder = ['Advertising', 'Analytics', 'Telemetry', 'Session replay', 'Social tracking'];
+
+  static const categoryInfo = <String, String>{
+    'Advertising':
+        'Builds an interest profile to target ads and measure ad clicks. Blocking it is safe and usually only means fewer or less targeted ads.',
+    'Analytics':
+        'Counts visits and records how you use a site or app (pages, clicks, how long). Blocking is safe; the site works the same, the owner just sees less.',
+    'Telemetry':
+        'Diagnostics and crash/usage reports sent by software. Often vendor-run and mostly harmless, but it reveals what you run and when. Blocking is usually safe, though it may stop crash reporting or some update features.',
+    'Session replay':
+        'Records your clicks, scrolling and sometimes typing so the owner can replay your visit. The most intrusive kind; blocking is recommended.',
+    'Social tracking':
+        'Social-network widgets and pixels that report your browsing back to the network even if you do not use it. Blocking is safe; share/like buttons may stop working.',
+  };
+
+  /// Known domains for a category, used to block the whole category at once.
+  static List<String> domainsFor(String category) => [
+        for (final e in _known.entries)
+          if (e.value.category == category && !e.key.contains('/')) e.key
+      ];
+
   static TrackerInfo? classify(String host) {
     final h = host.toLowerCase();
     for (final e in _known.entries) {
