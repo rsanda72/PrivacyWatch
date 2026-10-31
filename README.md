@@ -60,7 +60,7 @@ Limits:
 
 - Proxy blocks only cover traffic that goes through the proxy.
 - The Windows Firewall rule is meant to cover traffic that bypasses the proxy, but it has no effect if a third-party firewall (for example Norton) is the active firewall. In testing on a Norton 360 machine the rule was reported `NotApplicable` and direct traffic was not blocked. Add the same block in that product. PrivacyWatch warns when it detects one.
-- Blocks are held in memory and reset when the app restarts.
+- Blocks are saved to `%USERPROFILE%\PrivacyWatch\blocks.json` and restored on start. At startup PrivacyWatch also compares them with the real Windows Firewall rules: missing rules are dropped, and any leftover `PrivacyWatch block - ...` rules are adopted so you can unblock them. Creating a block reuses an existing rule instead of adding a duplicate, and unblocking removes every copy.
 
 ## Log
 
@@ -92,7 +92,7 @@ flutter run -d windows
 
 ## Roadmap
 
-- Persist blocks across restarts and clean up firewall rules
+- Auto-start capture and auto-set/restore the Windows proxy
 - Android local-VPN capture
 - Export evidence / report
 - Optional opt-in HTTPS inspection

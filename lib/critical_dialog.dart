@@ -190,6 +190,8 @@ class BlockedAppsDialog extends StatefulWidget {
 }
 
 class _BlockedAppsDialogState extends State<BlockedAppsDialog> {
+  String? _note;
+
   @override
   Widget build(BuildContext context) {
     final entries = widget.blocker.apps.entries.toList();
@@ -197,35 +199,47 @@ class _BlockedAppsDialogState extends State<BlockedAppsDialog> {
       title: const Text('Blocked applications and destinations'),
       content: SizedBox(
         width: 480,
-        child: (entries.isEmpty && widget.blocker.hosts.isEmpty)
-            ? const Text('Nothing is blocked.')
-            : Column(mainAxisSize: MainAxisSize.min, children: [
-                for (final h in widget.blocker.hosts.toList())
-                  ListTile(
-                    leading: const Icon(Icons.public_off, color: Colors.red),
-                    title: Text(h),
-                    subtitle: const Text('Destination blocked for all applications (proxy)'),
-                    trailing: TextButton(
-                      onPressed: () => setState(() => widget.blocker.unblockHost(h)),
-                      child: const Text('Unblock'),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_note != null) _Banner(Icons.info, Colors.deepOrange, _note!),
+          if (entries.isEmpty && widget.blocker.hosts.isEmpty)
+            const Text('Nothing is blocked.')
+          else
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  for (final h in widget.blocker.hosts.toList())
+                    ListTile(
+                      leading: const Icon(Icons.public_off, color: Colors.red),
+                      title: Text(h),
+                      subtitle: const Text('Destination blocked for all applications (proxy)'),
+                      trailing: TextButton(
+                        onPressed: () => setState(() => widget.blocker.unblockHost(h)),
+                        child: const Text('Unblock'),
+                      ),
                     ),
-                  ),
-                for (final en in entries)
-                  ListTile(
-                    leading: const Icon(Icons.block, color: Colors.red),
-                    title: Text(en.value.name),
-                    subtitle: Text('${en.value.path ?? 'path unknown'}\n'
-                        '${en.value.firewallRule ? 'Proxy + firewall rule' : 'Proxy only'}'),
-                    isThreeLine: true,
-                    trailing: TextButton(
-                      onPressed: () async {
-                        await widget.blocker.unblock(en.key);
-                        if (mounted) setState(() {});
-                      },
-                      child: const Text('Unblock'),
+                  for (final en in entries)
+                    ListTile(
+                      leading: const Icon(Icons.block, color: Colors.red),
+                      title: Text(en.value.name),
+                      subtitle: Text('${en.value.path ?? 'path unknown'}\n'
+                          '${en.value.firewallRule ? 'Proxy + firewall rule' : 'Proxy only'}'),
+                      isThreeLine: true,
+                      trailing: TextButton(
+                        onPressed: () async {
+                          final clean = await widget.blocker.unblock(en.key);
+                          if (!mounted) return;
+                          setState(() => _note = clean
+                              ? null
+                              : '${en.value.name} is unblocked in PrivacyWatch, but its Windows Firewall rule is still there '
+                                  '(permission declined). It will reappear here next start.');
+                        },
+                        child: const Text('Unblock'),
+                      ),
                     ),
-                  ),
-              ]),
+                ]),
+              ),
+            ),
+        ]),
       ),
       actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
     );

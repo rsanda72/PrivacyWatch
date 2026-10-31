@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:privacywatch/core/app_blocker.dart';
 import 'package:privacywatch/core/event.dart';
@@ -35,5 +37,18 @@ void main() {
     final b = AppBlocker()..blockHost('example.com');
     expect(b.isHostBlocked('www.example.com'), isTrue);
     expect(b.isHostBlocked('notexample.com'), isFalse);
+  });
+
+  test('blocks persist across restarts', () async {
+    final dir = Directory.systemTemp.createTempSync('pw_test');
+    final file = File('${dir.path}/blocks.json');
+    final a = AppBlocker(storeFile: file)..blockHost('Example.com');
+    a.apps['c:\\x\\tool.exe'] = BlockedApp('tool.exe', 'C:\\x\\tool.exe');
+    a.blockHost('tracker.test'); // triggers a save including the app
+    final b = AppBlocker(storeFile: file);
+    await b.load(syncFirewall: false);
+    expect(b.isHostBlocked('www.example.com'), isTrue);
+    expect(b.isBlocked('tool.exe', 'C:\\x\\tool.exe'), isTrue);
+    dir.deleteSync(recursive: true);
   });
 }

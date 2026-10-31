@@ -32,13 +32,26 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final _events = <TransactionEvent>[];
   final _count = ValueNotifier<int>(0);
-  final _blocker = AppBlocker();
+  late final AppBlocker _blocker = AppBlocker(storeFile: File('${_dataDir.path}/blocks.json'));
   final _alerts = <TransactionEvent>[];
   final _alerted = <String>{};
   bool _alertOpen = false;
   ProxyMonitor? _monitor;
   bool _flash = false;
   String? _error;
+
+  static Directory get _dataDir {
+    final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
+    return Directory('$home/PrivacyWatch')..createSync(recursive: true);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _blocker.load().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   // Proxy capture works on desktop; mobile needs a local VPN service (see README).
   bool get _supported => Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -50,9 +63,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     try {
-      final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
-      final dir = Directory('$home/PrivacyWatch')..createSync(recursive: true);
-      final m = ProxyMonitor(logFile: File('${dir.path}/transactions.jsonl'), blocker: _blocker);
+      final m = ProxyMonitor(logFile: File('${_dataDir.path}/transactions.jsonl'), blocker: _blocker);
       await m.start();
       m.events.listen(_onEvent);
       setState(() {
