@@ -81,7 +81,7 @@ class PiiMatch {
 
 class PiiDetector {
   static final _rules = <PiiCategory, RegExp>{
-    PiiCategory.email: RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'),
+    PiiCategory.email: RegExp(r'[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}'),
     PiiCategory.phone: RegExp(r'(?<!\d)(?:\+?1[ -.]?)?\(?\d{3}\)?[ -.]\d{3}[ -.]\d{4}(?!\d)'),
     PiiCategory.ssn: RegExp(r'(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)'),
     PiiCategory.creditCard: RegExp(r'(?<!\d)(?:\d[ -]?){13,19}(?!\d)'),
@@ -119,7 +119,11 @@ class PiiDetector {
     return '${v.substring(0, 2)}***${v.substring(v.length - 2)}';
   }
 
+  /// Only the first part of very large bodies is scanned so uploads cannot stall the monitor.
+  static const maxScanChars = 262144;
+
   List<PiiMatch> scan(String text, String where) {
+    if (text.length > maxScanChars) text = text.substring(0, maxScanChars);
     final out = <PiiMatch>[];
     _rules.forEach((cat, re) {
       for (final m in re.allMatches(text)) {

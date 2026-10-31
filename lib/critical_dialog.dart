@@ -1,16 +1,27 @@
 import 'package:flutter/material.dart';
 
+import 'block_advice.dart';
 import 'core/app_blocker.dart';
 import 'core/event.dart';
 import 'core/pii_detector.dart';
+import 'core/tracker_classifier.dart';
 import 'report_page.dart';
 
 /// Pop-up shown when a Critical transaction is detected.
 class CriticalAlertDialog extends StatefulWidget {
-  const CriticalAlertDialog({super.key, required this.event, required this.blocker, required this.onViewReport});
+  const CriticalAlertDialog({
+    super.key,
+    required this.event,
+    required this.blocker,
+    required this.onViewReport,
+    this.history = const [],
+    this.waiting = 0,
+  });
   final TransactionEvent event;
   final AppBlocker blocker;
   final VoidCallback onViewReport;
+  final int waiting; // other Critical alerts not yet viewed; reachable from the alert icon
+  final List<TransactionEvent> history; // everything captured so far, used to show what blocking would cost
 
   @override
   State<CriticalAlertDialog> createState() => _CriticalAlertDialogState();
@@ -22,6 +33,14 @@ class _CriticalAlertDialogState extends State<CriticalAlertDialog> {
   String? _warning;
 
   TransactionEvent get e => widget.event;
+  late final AppImpact _impact = AppImpact(
+    e.appName ?? 'unknown app',
+    e.appPath,
+    [
+      ...widget.history.where((h) => h.appName == e.appName && h.appPath == e.appPath),
+      if (!widget.history.contains(e)) e,
+    ],
+  );
   String get _appName => e.appName ?? 'unknown app';
   String get _host => e.host;
   bool get _blocked => widget.blocker.isBlocked(e.appName, e.appPath);
@@ -69,10 +88,18 @@ class _CriticalAlertDialogState extends State<CriticalAlertDialog> {
       title: Row(children: [
         const Expanded(child: Text('Critical: personal data detected')),
         SeverityChip(e.severity),
+        IconButton(
+          tooltip: 'Close',
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ]),
       content: SizedBox(
         width: 560,
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (widget.waiting > 0)
+            _Banner(Icons.notifications_active, Colors.deepOrange,
+                '${widget.waiting} more critical alert(s) waiting. Close this, then open them from the alert icon in the top bar.'),
           if (_busy)
             const _Banner(Icons.admin_panel_settings, Colors.blue,
                 'Waiting for Windows permission - approve the prompt (it may be behind this window).'),
@@ -101,21 +128,11 @@ class _CriticalAlertDialogState extends State<CriticalAlertDialog> {
             for (var i = 0; i < steps.length; i++) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${i + 1}. ${steps[i]}')),
             const Divider(),
             const Text('Blocking options', style: TextStyle(fontWeight: FontWeight.bold)),
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('- Block this destination: stops every application using the proxy from reaching this site. '
-                  'The app keeps working elsewhere. Best when the app is shared or legitimate (browser, curl, PowerShell).'),
-            ),
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('- Block this app: stops ALL traffic from this program, legitimate or not, until you unblock it. '
-                  'Best for an unknown or untrusted program.'),
-            ),
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('- Limit: blocks apply to traffic through PrivacyWatch. Traffic that bypasses the proxy is only '
-                  'stopped by a firewall rule, and a third-party firewall such as Norton may ignore Windows Firewall rules.'),
-            ),
+            const SizedBox(height: 4),
+            Text(_impact.recommendation),
+            for (final l in _impact.impactLines) Padding(padding: const EdgeInsets.only(top: 4), child: Text('- $l')),
+            const SizedBox(height: 8),
+            const BlockingGuide(),
               ]),
             ),
           ),
@@ -192,54 +209,141 @@ class BlockedAppsDialog extends StatefulWidget {
 class _BlockedAppsDialogState extends State<BlockedAppsDialog> {
   String? _note;
 
+  AppBlocker get b => widget.blocker;
+
   @override
   Widget build(BuildContext context) {
-    final entries = widget.blocker.apps.entries.toList();
+    final apps = b.apps.entries.toList();
+    // Group blocked destinations by tracker category; anything else is listed as "Other destinations".
+    final byCat = <String, List<String>>{};
+    final grouped = <String>{};
+    for (final cat in TrackerClassifier.categoryOrder) {
+      final blocked = [for (final d in TrackerClassifier.domainsFor(cat)) if (b.hosts.contains(d)) d];
+      if (blocked.isNotEmpty) byCat[cat] = blocked;
+      grouped.addAll(blocked);
+    }
+    final other = b.hosts.where((h) => !grouped.contains(h)).toList()..sort();
+
+    Widget section(IconData icon, String title, int count, List<Widget> children, {Widget? trailing}) => Card(
+          margin: const EdgeInsets.only(bottom: 6),
+          child: ExpansionTile(
+            leading: Icon(icon, color: Colors.red),
+            title: Text('$title ($count)'),
+            trailing: trailing,
+            children: children,
+          ),
+        );
+
     return AlertDialog(
-      title: const Text('Blocked applications and destinations'),
+      title: const Text('Blocked items'),
       content: SizedBox(
         width: 480,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           if (_note != null) _Banner(Icons.info, Colors.deepOrange, _note!),
-          if (entries.isEmpty && widget.blocker.hosts.isEmpty)
+          if (apps.isEmpty && b.hosts.isEmpty)
             const Text('Nothing is blocked.')
           else
             Flexible(
               child: SingleChildScrollView(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  for (final h in widget.blocker.hosts.toList())
-                    ListTile(
-                      leading: const Icon(Icons.public_off, color: Colors.red),
-                      title: Text(h),
-                      subtitle: const Text('Destination blocked for all applications (proxy)'),
+                  if (apps.isNotEmpty)
+                    section(Icons.block, 'Applications', apps.length, [
+                      for (final en in apps)
+                        ListTile(
+                          dense: true,
+                          title: Text(en.value.name),
+                          subtitle: Text('${en.value.path ?? 'path unknown'}\n'
+                              '${en.value.firewallRule ? 'Proxy + firewall rule' : 'Proxy only'}'),
+                          isThreeLine: true,
+                          trailing: TextButton(
+                            onPressed: () async {
+                              final clean = await b.unblock(en.key);
+                              if (!mounted) return;
+                              setState(() => _note = clean
+                                  ? null
+                                  : '${en.value.name} is unblocked in PrivacyWatch, but its Windows Firewall rule is still there '
+                                      '(permission declined). It will reappear here next start.');
+                            },
+                            child: const Text('Unblock'),
+                          ),
+                        ),
+                    ]),
+                  for (final c in byCat.entries)
+                    section(
+                      Icons.visibility_off,
+                      '${c.key} trackers',
+                      c.value.length,
+                      [
+                        ListTile(
+                          dense: true,
+                          title: Text(TrackerClassifier.categoryShort[c.key] ?? ''),
+                          subtitle: const Text('Blocked for every application using the proxy.'),
+                        ),
+                        for (final h in c.value)
+                          ListTile(
+                            dense: true,
+                            title: Text(h),
+                            trailing: TextButton(
+                              onPressed: () => setState(() => b.unblockHost(h)),
+                              child: const Text('Unblock'),
+                            ),
+                          ),
+                      ],
                       trailing: TextButton(
-                        onPressed: () => setState(() => widget.blocker.unblockHost(h)),
-                        child: const Text('Unblock'),
+                        onPressed: () => setState(() => c.value.forEach(b.unblockHost)),
+                        child: const Text('Unblock all'),
                       ),
                     ),
-                  for (final en in entries)
-                    ListTile(
-                      leading: const Icon(Icons.block, color: Colors.red),
-                      title: Text(en.value.name),
-                      subtitle: Text('${en.value.path ?? 'path unknown'}\n'
-                          '${en.value.firewallRule ? 'Proxy + firewall rule' : 'Proxy only'}'),
-                      isThreeLine: true,
-                      trailing: TextButton(
-                        onPressed: () async {
-                          final clean = await widget.blocker.unblock(en.key);
-                          if (!mounted) return;
-                          setState(() => _note = clean
-                              ? null
-                              : '${en.value.name} is unblocked in PrivacyWatch, but its Windows Firewall rule is still there '
-                                  '(permission declined). It will reappear here next start.');
-                        },
-                        child: const Text('Unblock'),
-                      ),
-                    ),
+                  if (other.isNotEmpty)
+                    section(Icons.public_off, 'Other destinations', other.length, [
+                      for (final h in other)
+                        ListTile(
+                          dense: true,
+                          title: Text(h),
+                          subtitle: const Text('Blocked for all applications (proxy)'),
+                          trailing: TextButton(
+                            onPressed: () => setState(() => b.unblockHost(h)),
+                            child: const Text('Unblock'),
+                          ),
+                        ),
+                    ]),
                 ]),
               ),
             ),
         ]),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
+    );
+  }
+}
+
+/// Every Critical finding this session. Tap one to reopen its full details.
+class AlertInboxDialog extends StatelessWidget {
+  const AlertInboxDialog({super.key, required this.alerts, required this.unseen});
+  final List<TransactionEvent> alerts;
+  final Set<TransactionEvent> unseen;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Critical alerts (${alerts.length})'),
+      content: SizedBox(
+        width: 480,
+        child: alerts.isEmpty
+            ? const Text('No critical findings this session.')
+            : ListView(shrinkWrap: true, children: [
+                for (final e in alerts)
+                  ListTile(
+                    dense: true,
+                    leading: Icon(Icons.circle, size: 12, color: unseen.contains(e) ? Colors.red.shade800 : Colors.grey),
+                    title: Text('${e.appName ?? 'unknown app'} -> ${e.host}'),
+                    subtitle: Text('${e.what.map((m) => m.category.label).toSet().join(', ')}\n'
+                        '${e.time.toIso8601String().substring(0, 19)}${unseen.contains(e) ? '  |  not yet viewed' : ''}'),
+                    isThreeLine: true,
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).pop(e),
+                  ),
+              ]),
       ),
       actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
     );

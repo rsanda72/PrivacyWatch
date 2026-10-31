@@ -79,6 +79,14 @@ class TrackerClassifier {
         'Social-network widgets and pixels that report your browsing back to the network even if you do not use it. Blocking is safe; share/like buttons may stop working.',
   };
 
+  static const categoryShort = <String, String>{
+    'Advertising': 'Profiles your interests to target ads.',
+    'Analytics': 'Records which pages you visit and what you click.',
+    'Telemetry': 'Sends diagnostics and usage reports about your software.',
+    'Session replay': 'Records your clicks, scrolling and typing to replay your visit.',
+    'Social tracking': 'Reports your browsing back to social networks.',
+  };
+
   /// Known domains for a category, used to block the whole category at once.
   static List<String> domainsFor(String category) => [
         for (final e in _known.entries)

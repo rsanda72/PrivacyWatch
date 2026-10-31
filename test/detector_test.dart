@@ -51,4 +51,11 @@ void main() {
     expect(b.isBlocked('tool.exe', 'C:\\x\\tool.exe'), isTrue);
     dir.deleteSync(recursive: true);
   });
+
+  test('large bodies without matches scan quickly', () {
+    final sw = Stopwatch()..start();
+    PiiDetector().scan('blob=${'x' * 1000000}', 'body');
+    PiiDetector().scan('1234567890' * 30000, 'body');
+    expect(sw.elapsedMilliseconds, lessThan(3000));
+  });
 }

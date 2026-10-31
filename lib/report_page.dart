@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'block_advice.dart';
 import 'core/app_blocker.dart';
 import 'core/event.dart';
 import 'core/pii_detector.dart';
@@ -43,6 +44,16 @@ class ReportPage extends StatefulWidget {
 
 String _appName(TransactionEvent e) =>
     (e.app ?? 'unknown app').replaceAll(RegExp(r' \(PID \d+\)'), '');
+
+bool _isBlocked(TransactionEvent e) => e.how.startsWith('BLOCKED');
+
+/// "4 contact(s), all blocked - nothing was sent" style summary.
+String _blockedSummary(List<TransactionEvent> l) {
+  final n = l.where(_isBlocked).length;
+  if (n == 0) return '${l.length} contact(s), none blocked';
+  if (n == l.length) return '${l.length} contact(s), all blocked - nothing was sent';
+  return '${l.length} contact(s), $n blocked, ${l.length - n} got through';
+}
 
 class _Agg {
   _Agg(List<TransactionEvent> events) {
@@ -158,11 +169,12 @@ class _ReportPageState extends State<ReportPage> {
                   icon: Icons.visibility,
                   title: 'Behavioral tracking',
                   big: '${a.trackers.values.fold<int>(0, (n, l) => n + l.length)}',
-                  unit: 'tracker contact(s)',
+                  unit: 'tracker contact(s), ${a.trackers.values.expand((l) => l).where(_isBlocked).length} blocked',
                   color: a.trackers.isEmpty ? Colors.green : Colors.blue,
                   lines: [
                     if (a.trackers.isEmpty) 'None detected yet',
-                    for (final c in a.trackerCats.take(2)) '$c (${a.trackers[c]!.length})',
+                    for (final c in a.trackerCats.take(2))
+                      '$c (${a.trackers[c]!.length}${a.trackers[c]!.every(_isBlocked) ? ', blocked' : ''})',
                   ],
                   traffic: _traffic(a.trackers.values.expand((l) => l).toList()),
                   onTap: () => _show('Behavioral tracking', _tracking),
@@ -254,7 +266,7 @@ class _ReportPageState extends State<ReportPage> {
           _Tile(
             title: p.key,
             subtitle: '${_traffic(p.value)}\n${p.value.map((e) => e.host).toSet().length} destination(s)',
-            onTap: () => _show(p.key, (_, _) => _txList(p.value)),
+            onTap: () => _show(p.key, (_, _) => _appDetail(p.value)),
           ),
       ]),
       const SizedBox(height: 8),
@@ -265,7 +277,7 @@ class _ReportPageState extends State<ReportPage> {
           _Tile(
             title: h.key,
             subtitle: '${_traffic(h.value)}\n${h.value.length} transaction(s)',
-            onTap: () => _show(h.key, (_, _) => _txList(h.value)),
+            onTap: () => _show(h.key, (_, _) => _destDetail(h.key)),
           ),
       ]),
     ]);
@@ -386,7 +398,7 @@ class _ReportPageState extends State<ReportPage> {
           badge: SeverityChip(_Agg.worst(d.value)),
           title: d.key,
           subtitle: '${d.value.length} transaction(s)',
-          onTap: () => _show(d.key, (_, _) => _txList(d.value)),
+          onTap: () => _show(d.key, (_, _) => _destDetail(d.key)),
         ),
     ]);
   }
@@ -394,24 +406,48 @@ class _ReportPageState extends State<ReportPage> {
   Widget _tracking(BuildContext ctx, VoidCallback refresh) {
     final a = _Agg(events);
     if (a.trackers.isEmpty) return const Center(child: Text('No known trackers contacted yet.'));
-    return _grid([
+    return ListView(shrinkWrap: true, children: [
       for (final cat in a.trackerCats)
-        _Tile(
-          badge: widget.blocker == null
-              ? null
-              : Row(mainAxisSize: MainAxisSize.min, children: [
-                  Switch(
-                    value: _categoryBlocked(cat),
-                    onChanged: (v) {
-                      _setCategoryBlocked(cat, v);
-                      refresh();
-                    },
+        Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _show(cat, (_, _) => _trackerCategory(cat)),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  const Icon(Icons.visibility, size: 18, color: Colors.blue),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('$cat  -  ${_blockedSummary(a.trackers[cat]!)}',
+                        style: Theme.of(ctx).textTheme.titleSmall),
                   ),
-                  Text(_categoryBlocked(cat) ? 'Blocked' : 'Turn off', style: const TextStyle(fontSize: 11)),
+                  if (widget.blocker != null)
+                    Column(children: [
+                      Switch(
+                        value: _categoryBlocked(cat),
+                        onChanged: (v) {
+                          _setCategoryBlocked(cat, v);
+                          refresh();
+                        },
+                      ),
+                      Text(_categoryBlocked(cat) ? 'Blocked' : 'Turn off', style: const TextStyle(fontSize: 11)),
+                    ]),
                 ]),
-          title: cat,
-          subtitle: '${a.trackers[cat]!.length} contact(s)',
-          onTap: () => _show(cat, (_, rebuild) => _trackerCategory(cat), actions: []),
+                Text(TrackerClassifier.categoryShort[cat] ?? 'Collects data about your activity.',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(TrackerClassifier.categoryInfo[cat] ?? '', style: Theme.of(ctx).textTheme.bodySmall),
+                const SizedBox(height: 4),
+                Text(
+                  '${a.trackers[cat]!.map((e) => e.tracker!.owner).toSet().length} company(ies) | '
+                  '${_traffic(a.trackers[cat]!)}  -  tap for details',
+                  style: Theme.of(ctx).textTheme.labelSmall,
+                ),
+              ]),
+            ),
+          ),
         ),
     ]);
   }
@@ -447,13 +483,29 @@ class _ReportPageState extends State<ReportPage> {
           title: p.key,
           subtitle: '${p.value.length} tx | up ${_bytes(_sum(p.value, (e) => e.bytesUp))}\n'
               'down ${_bytes(_sum(p.value, (e) => e.bytesDown))} | ${p.value.map((e) => e.host).toSet().length} dest.',
-          onTap: () => _show(p.key, (_, _) => _txList(p.value)),
+          onTap: () => _show(p.key, (_, _) => _appDetail(p.value)),
         ),
     ]);
   }
 
-  Widget _txList(List<TransactionEvent> list) =>
-      ListView(shrinkWrap: true, children: [for (final e in list.reversed) _txTile(e)]);
+  Widget _appDetail(List<TransactionEvent> appEvents) {
+    final first = appEvents.first;
+    final impact = AppImpact(_appName(first), first.appPath, appEvents);
+    return ListView(shrinkWrap: true, children: [
+      BlockDecisionPanel.app(blocker: widget.blocker, app: impact),
+      Text('Transactions', style: Theme.of(context).textTheme.titleSmall),
+      for (final e in appEvents.reversed) _txTile(e),
+    ]);
+  }
+
+  Widget _destDetail(String host) {
+    final impact = DestImpact(host, events);
+    return ListView(shrinkWrap: true, children: [
+      BlockDecisionPanel.destination(blocker: widget.blocker, dest: impact),
+      Text('Transactions', style: Theme.of(context).textTheme.titleSmall),
+      for (final e in impact.events.reversed) _txTile(e),
+    ]);
+  }
 
   Widget _txTile(TransactionEvent e, {PiiCategory? only}) {
     final found = e.what.where((m) => only == null || m.category == only);
@@ -527,8 +579,12 @@ class _ReportPageState extends State<ReportPage> {
     if (a.trackers.isEmpty) b.writeln('None detected.');
     for (final cat in a.trackerCats) {
       final list = a.trackers[cat]!;
-      b.writeln('$cat: ${list.length} transaction(s)');
-      b.writeln('  ${TrackerClassifier.categoryInfo[cat] ?? ''}');
+      b.writeln('$cat: ${_blockedSummary(list)}');
+      if (list.every(_isBlocked)) {
+        b.writeln('  Status: already blocked by the user; these services received nothing.');
+      } else {
+        b.writeln('  ${TrackerClassifier.categoryInfo[cat] ?? ''}');
+      }
       final owners = <String, Set<String>>{};
       for (final e in list) {
         owners.putIfAbsent(e.tracker!.owner, () => {}).add('${e.host} (${_appName(e)})');
@@ -545,7 +601,8 @@ class _ReportPageState extends State<ReportPage> {
       ..writeln()
       ..writeln('=== APPLICATIONS ===');
     for (final p in a.appList) {
-      b.writeln('${p.key}: ${p.value.length} transaction(s), up ${_bytes(_sum(p.value, (e) => e.bytesUp))}, '
+      b.writeln('${p.key}: ${p.value.length} transaction(s) (${p.value.where(_isBlocked).length} blocked), '
+          'up ${_bytes(_sum(p.value, (e) => e.bytesUp))}, '
           'down ${_bytes(_sum(p.value, (e) => e.bytesDown))}, ${p.value.map((e) => e.host).toSet().length} destination(s)');
     }
     return b.toString();

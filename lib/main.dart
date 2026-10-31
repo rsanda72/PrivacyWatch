@@ -33,7 +33,8 @@ class _HomePageState extends State<HomePage> {
   final _events = <TransactionEvent>[];
   final _count = ValueNotifier<int>(0);
   late final AppBlocker _blocker = AppBlocker(storeFile: File('${_dataDir.path}/blocks.json'));
-  final _alerts = <TransactionEvent>[];
+  final _inbox = <TransactionEvent>[]; // every Critical finding this session, newest first
+  final _unseen = <TransactionEvent>[];
   final _alerted = <String>{};
   bool _alertOpen = false;
   ProxyMonitor? _monitor;
@@ -90,25 +91,42 @@ class _HomePageState extends State<HomePage> {
     if (e.severity == Severity.critical) _queueAlert(e);
   }
 
-  // One alert at a time; the same app + data types only alerts once per session.
+  // Every Critical finding is kept in the inbox (alert icon). A new one pops up only when no pop-up is open;
+  // closing a pop-up never chains into the next, so one click always gets you out.
   void _queueAlert(TransactionEvent e) {
     if (_blocker.isBlocked(e.appName, e.appPath)) return;
     final key = '${e.appName}|${(e.what.map((m) => m.category.name).toSet().toList()..sort()).join(',')}';
     if (!_alerted.add(key)) return;
-    _alerts.add(e);
-    _showNextAlert();
+    setState(() {
+      _inbox.insert(0, e);
+      _unseen.add(e);
+    });
+    if (!_alertOpen) _openAlert(e);
   }
 
-  Future<void> _showNextAlert() async {
-    if (_alertOpen || _alerts.isEmpty || !mounted) return;
+  Future<void> _openAlert(TransactionEvent e) async {
+    if (!mounted) return;
     _alertOpen = true;
-    final e = _alerts.removeAt(0);
+    setState(() => _unseen.remove(e));
     await showDialog<void>(
       context: context,
-      builder: (_) => CriticalAlertDialog(event: e, blocker: _blocker, onViewReport: _openReport),
+      builder: (_) => CriticalAlertDialog(
+        event: e,
+        blocker: _blocker,
+        onViewReport: _openReport,
+        history: List.of(_events),
+        waiting: _unseen.length,
+      ),
     );
     _alertOpen = false;
-    _showNextAlert();
+  }
+
+  Future<void> _openInbox() async {
+    final picked = await showDialog<TransactionEvent>(
+      context: context,
+      builder: (ctx) => AlertInboxDialog(alerts: List.of(_inbox), unseen: Set.of(_unseen)),
+    );
+    if (picked != null) await _openAlert(picked);
   }
 
   void _openReport() => Navigator.of(context)
@@ -123,6 +141,16 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(title: const Text('PrivacyWatch'), actions: [
+          IconButton(
+            tooltip: 'Critical alerts (${_inbox.length}, ${_unseen.length} not yet viewed)',
+            icon: Badge(
+              isLabelVisible: _inbox.isNotEmpty,
+              label: Text('${_unseen.isEmpty ? _inbox.length : _unseen.length}'),
+              backgroundColor: _unseen.isEmpty ? Colors.grey : Colors.red.shade800,
+              child: const Icon(Icons.gpp_maybe),
+            ),
+            onPressed: _openInbox,
+          ),
           IconButton(
             tooltip: 'Blocked applications',
             icon: const Icon(Icons.block),
@@ -170,10 +198,19 @@ class _HomePageState extends State<HomePage> {
               itemBuilder: (_, i) {
                 final e = _events[i];
                 final hit = e.what.isNotEmpty;
+                final blocked = e.how.startsWith('BLOCKED');
                 return ListTile(
-                  leading: Icon(hit ? Icons.warning_amber : Icons.lock_outline,
-                      color: severityColor(e.severity)),
-                  trailing: hit ? SeverityChip(e.severity) : null,
+                  tileColor: blocked ? Colors.red.withValues(alpha: 0.08) : null,
+                  leading: Icon(blocked ? Icons.block : (hit ? Icons.warning_amber : Icons.lock_outline),
+                      color: blocked ? Colors.red.shade800 : severityColor(e.severity)),
+                  trailing: blocked
+                      ? Chip(
+                          label: Text('BLOCKED', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          backgroundColor: Colors.red.shade800,
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        )
+                      : (hit ? SeverityChip(e.severity) : null),
                   title: Text('${e.app ?? 'unknown app'}  ->  ${e.host}'),
                   subtitle: Text([
                     '${e.how}  |  up ${TransactionEvent.formatBytes(e.bytesUp)}  down ${TransactionEvent.formatBytes(e.bytesDown)}  |  ${e.duration.inMilliseconds} ms',
