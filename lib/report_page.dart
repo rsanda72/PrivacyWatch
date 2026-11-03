@@ -7,8 +7,10 @@ import 'package:flutter/services.dart';
 import 'block_advice.dart';
 import 'traffic_trend.dart';
 import 'audit_view.dart';
+import 'consumer_summary.dart';
 import 'core/app_blocker.dart';
 import 'core/audit_store.dart';
+import 'core/ack_store.dart';
 import 'core/event.dart';
 import 'core/pii_detector.dart';
 import 'core/tracker_classifier.dart';
@@ -121,7 +123,10 @@ class _ReportPageState extends State<ReportPage> {
   void initState() {
     super.initState();
     final d = widget.dataDir;
-    if (d != null) AuditStore.instance.attach(File('${d.path}/audit.json'));
+    if (d != null) {
+      AuditStore.instance.attach(File('${d.path}/audit.json'));
+      AckStore.instance.attach(File('${d.path}/acks.json'));
+    }
   }
 
   @override
@@ -173,10 +178,36 @@ class _ReportPageState extends State<ReportPage> {
           ],
         ),
       ]),
-      body: Center(
+      body: LayoutBuilder(builder: (context, box) {
+        final wide = box.maxWidth >= 900;
+        return Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: _maxWidth),
+          constraints: BoxConstraints(maxWidth: wide ? 1500 : _maxWidth),
           child: ListView(padding: const EdgeInsets.all(12), children: [
+            ConsumerDashboard(wide: wide, onChanged: () => setState(() {}), ConsumerSummary.build(
+              events: events,
+              wasBlocked: _isBlocked,
+              score: _scoreFor(_openNow),
+              previousScore: AuditStore.instance.snapshots.firstOrNull?.score,
+            )),
+            const SizedBox(height: 8),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                title: const Text('Technical details'),
+                subtitle: const Text('For advanced users: destinations, apps and traffic'),
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                children: [_technicalDetails(a, topCat, wide)],
+              ),
+            ),
+          ]),
+        ),
+      );}),
+    );
+  }
+
+  Widget _technicalDetails(_Agg a, PiiCategory? topCat, bool wide) {
+    return Column(children: [
             _liveBanner(),
             const SizedBox(height: 8),
             _summaryCard(a),
@@ -192,7 +223,7 @@ class _ReportPageState extends State<ReportPage> {
             ]),
             const SizedBox(height: 8),
             GridView.count(
-              crossAxisCount: 2,
+              crossAxisCount: wide ? 4 : 2,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 10,
@@ -264,10 +295,7 @@ class _ReportPageState extends State<ReportPage> {
               style: Theme.of(context).textTheme.bodySmall,
               textAlign: TextAlign.center,
             ),
-          ]),
-        ),
-      ),
-    );
+    ]);
   }
 
   /// A destination counts as open when its traffic was not refused and it is not blocked now.

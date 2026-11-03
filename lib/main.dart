@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'core/ack_store.dart';
 import 'core/app_blocker.dart';
 import 'core/event.dart';
 import 'core/pii_detector.dart';
 import 'core/proxy_monitor.dart';
 import 'critical_dialog.dart';
+import 'reasoning.dart';
 import 'report_page.dart';
 
 void main() => runApp(const PrivacyWatchApp());
@@ -50,6 +52,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    AckStore.instance.attach(File('${_dataDir.path}/acks.json'));
     _blocker.load().then((_) {
       if (mounted) setState(() {});
     });
@@ -94,10 +97,34 @@ class _HomePageState extends State<HomePage> {
 
   // Every Critical finding is kept in the inbox (alert icon). A new one pops up only when no pop-up is open;
   // closing a pop-up never chains into the next, so one click always gets you out.
+  List<String> _ackKeys(TransactionEvent e) => [
+        for (final c in e.what.map((m) => m.category).toSet())
+          AckStore.key(c.name, (e.app ?? 'an unknown app').replaceAll(RegExp(r' \(PID \d+\)'), ''), e.host)
+      ];
+
+  bool _isAcked(TransactionEvent e) => _ackKeys(e).every(AckStore.instance.has);
+
+  void _acknowledgeAll() {
+    AckStore.instance.add(_inbox.expand(_ackKeys));
+    setState(() {
+      _inbox.clear();
+      _unseen.clear();
+    });
+  }
+
+  /// A pattern match alone should not interrupt the user: only pop up when the full analysis is confident.
+  bool _strongEvidence(TransactionEvent e) {
+    final mine = _events.where((x) => x.app == e.app).toList();
+    final rs = ReasoningEngine.analyzeAll([e, ...mine], (x) => x.how.startsWith('BLOCKED'));
+    final cats = e.what.map((m) => m.category).toSet();
+    return rs.any((r) => r.host == e.host && cats.contains(r.category) && r.confidence >= 76);
+  }
+
   void _queueAlert(TransactionEvent e) {
-    if (_blocker.isBlocked(e.appName, e.appPath)) return;
+    if (_blocker.isBlocked(e.appName, e.appPath) || _isAcked(e)) return;
     final key = '${e.appName}|${(e.what.map((m) => m.category.name).toSet().toList()..sort()).join(',')}';
-    if (!_alerted.add(key)) return;
+    if (_alerted.contains(key) || !_strongEvidence(e)) return;
+    _alerted.add(key);
     setState(() {
       _inbox.insert(0, e);
       _unseen.add(e);
@@ -130,6 +157,14 @@ class _HomePageState extends State<HomePage> {
     if (picked != null) await _openAlert(picked);
   }
 
+  /// Stops capture first so the proxy is released cleanly, then exits.
+  Future<void> _quit() async {
+    try {
+      await _monitor?.stop();
+    } catch (_) {}
+    exit(0);
+  }
+
   void _openReport() => Navigator.of(context)
       .push(MaterialPageRoute(builder: (_) => ReportPage(liveEvents: _events, liveCount: _count, blocker: _blocker, dataDir: _dataDir)));
 
@@ -141,7 +176,17 @@ class _HomePageState extends State<HomePage> {
       color: _flash ? Colors.red.shade200 : Colors.transparent,
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(title: const Text('PrivacyWatch'), actions: [
+        appBar: AppBar(title: Row(mainAxisSize: MainAxisSize.min, children: [
+          Image.asset('icons/logo_for_PrivacyW.jpg', height: 32),
+          const SizedBox(width: 10),
+          const Text('PrivacyWatch'),
+        ]), actions: [
+          if (_supported)
+            IconButton(
+              tooltip: 'Close PrivacyWatch',
+              icon: const Icon(Icons.close),
+              onPressed: _quit,
+            ),
           IconButton(
             tooltip: 'Critical alerts (${_inbox.length}, ${_unseen.length} not yet viewed)',
             icon: Badge(
@@ -170,6 +215,8 @@ class _HomePageState extends State<HomePage> {
                   _openReport();
                 case 'alerts':
                   _openInbox();
+                case 'ack':
+                  _acknowledgeAll();
                 case 'blocked':
                   showDialog<void>(context: context, builder: (_) => BlockedAppsDialog(blocker: _blocker));
                 case 'toggle':
@@ -181,6 +228,8 @@ class _HomePageState extends State<HomePage> {
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'report', child: ListTile(leading: Icon(Icons.analytics), title: Text('Report / Analysis'))),
               const PopupMenuItem(value: 'alerts', child: ListTile(leading: Icon(Icons.gpp_maybe), title: Text('Critical alerts'))),
+              if (_inbox.isNotEmpty)
+                const PopupMenuItem(value: 'ack', child: ListTile(leading: Icon(Icons.done_all), title: Text('Acknowledge all alerts'))),
               const PopupMenuItem(value: 'blocked', child: ListTile(leading: Icon(Icons.block), title: Text('Blocked items'))),
               if (_supported)
                 PopupMenuItem(
