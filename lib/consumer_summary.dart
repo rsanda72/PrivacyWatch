@@ -12,17 +12,18 @@ enum SafetyLevel { safe, warning, alert }
 enum Confidence { high, medium, low }
 
 enum OverallStatus {
-  excellent('Excellent', Colors.green),
-  good('Good', Colors.lightGreen),
-  attention('Attention Needed', Colors.orange),
-  highRisk('High Risk', Colors.red);
+  strong('Strong Protection', Colors.green),
+  good('Good Protection', Colors.lightGreen),
+  moderate('Moderate Exposure', Colors.amber),
+  high('High Exposure', Colors.deepOrange),
+  urgent('Urgent Attention Required', Colors.red);
 
   const OverallStatus(this.label, this.color);
   final String label;
   final Color color;
 
   static OverallStatus fromScore(int s) =>
-      s >= 90 ? excellent : s >= 75 ? good : s >= 50 ? attention : highRisk;
+      s >= 91 ? strong : s >= 76 ? good : s >= 51 ? moderate : s >= 26 ? high : urgent;
 }
 
 /// One row of "Sensitive information": a plain-language kind of data and what happened to it.
@@ -40,9 +41,38 @@ class TrackingSummary {
   int trackersSeen = 0, telemetrySeen = 0, advertisingSeen = 0;
 }
 
+enum Risk {
+  safe('Safe', Colors.green),
+  low('Low', Colors.lightGreen),
+  medium('Medium', Colors.amber),
+  high('High', Colors.deepOrange),
+  critical('Critical', Colors.red);
+
+  const Risk(this.label, this.color);
+  final String label;
+  final Color color;
+}
+
 class ConsumerSummary {
   ConsumerSummary._(this.score, this.status, this.items, this.tracking, this.trend, this.headline,
-      this.details, this.actions, this.blockedTotal, this.leftTotal, this.reasonings, this.impact);
+      this.details, this.actions, this.blockedTotal, this.leftTotal, this.reasonings, this.impact, this.risk, this.assessment, this.scoreDelta, this.trackerHosts, this.newTrackers);
+
+  final int? scoreDelta; // change since the last scan, null if there is no earlier scan
+  final int trackerHosts; // trackers identified (detection visibility, not a penalty)
+  final int newTrackers; // trackers not seen in the previous scan
+
+  String get scoreChangeText => scoreDelta == null ? 'First scan' : scoreDelta! > 0 ? '+$scoreDelta' : scoreDelta! < 0 ? '$scoreDelta' : 'No change';
+  String get exposureTrend => scoreDelta == null ? 'Baseline set' : scoreDelta! > 0 ? 'Improving ↑' : scoreDelta! < 0 ? 'Worsening ↓' : 'Steady →';
+  List<Reasoning> get low => reasonings.where((r) => r.isActive && r.confidence >= 26 && r.confidence < 51).toList();
+
+  final Risk risk;
+  final String assessment;
+
+  // Active = actually sent, not yet acknowledged. Confidence bands: 91+ critical, 76-90 high, 51-75 medium.
+  List<String> get detectedLabels => {for (final r in [...critical, ...high]) r.category.label}.toList();
+  List<Reasoning> get critical => reasonings.where((r) => r.isActive && r.confidence >= 91).toList();
+  List<Reasoning> get high => reasonings.where((r) => r.isActive && r.confidence >= 76 && r.confidence < 91).toList();
+  List<Reasoning> get medium => reasonings.where((r) => r.isActive && r.confidence >= 51 && r.confidence < 76).toList();
 
   final ImpactSummary impact;
 
@@ -74,6 +104,7 @@ class ConsumerSummary {
     required bool Function(TransactionEvent) wasBlocked,
     required int score,
     int? previousScore,
+    Set<String>? previousTrackerHosts,
   }) {
     final reasonings = ReasoningEngine.analyzeAll(events, wasBlocked);
     final items = <SensitiveItem>[];
@@ -138,7 +169,38 @@ class ConsumerSummary {
     }
     final blockedTotal = t.trackers + t.telemetry + t.advertising + protectedCount;
 
-    final status = OverallStatus.fromScore(score);
+    final act = reasonings.where((r) => r.isActive).toList();
+    final nCrit = act.where((r) => r.confidence >= 91).length;
+    final nHigh = act.where((r) => r.confidence >= 76 && r.confidence < 91).length;
+    final nMed = act.where((r) => r.confidence >= 51 && r.confidence < 76).length;
+    final risk = nCrit > 0
+        ? Risk.critical
+        : nHigh > 0
+            ? Risk.high
+            : nMed > 0
+                ? Risk.medium
+                : act.any((r) => r.confidence >= 26)
+                    ? Risk.low
+                    : Risk.safe;
+    // The score can never look healthier than the worst confirmed finding.
+    final shownScore = switch (risk) {
+      Risk.critical => score.clamp(0, 40),
+      Risk.high => score.clamp(0, 60),
+      Risk.medium => score.clamp(0, 80),
+      _ => score,
+    };
+    final top = act.where((r) => r.confidence >= 76).toList();
+    final plain = top.any((r) => r.unencrypted);
+    final assessment = switch (risk) {
+      Risk.critical || Risk.high =>
+        'PrivacyWatch detected sensitive information that appears to have left your device${plain ? ' over unencrypted HTTP' : ''}. '
+            '${risk == Risk.critical ? 'Immediate investigation is recommended.' : 'Please review it soon.'}',
+      Risk.medium => 'Some personal information may have been sent, but the evidence is not conclusive. Review the findings below.',
+      Risk.low => 'Only weak signs were found and they are probably false alarms. No action is needed.',
+      Risk.safe => 'No personal information was found leaving your device.',
+    };
+
+    final status = OverallStatus.fromScore(shownScore);
     final trend = previousScore == null
         ? 'No earlier check to compare with yet. Save a snapshot to start tracking your progress.'
         : score > previousScore
@@ -148,12 +210,12 @@ class ConsumerSummary {
                 : 'Unchanged since your last check.';
 
     final headline = switch (status) {
-      OverallStatus.excellent => 'You are safe. Nothing personal left your device.',
-      OverallStatus.good => 'You are mostly safe. Nothing urgent.',
-      OverallStatus.attention => 'Some personal information may have left your device.',
-      OverallStatus.highRisk => 'Sensitive information left your device. Please take action.',
+      OverallStatus.strong => 'Your information is well protected.',
+      OverallStatus.good => 'Your protection is good. Nothing urgent.',
+      OverallStatus.moderate => 'Some information may be exposed. A few quick fixes will help.',
+      OverallStatus.high => 'There are exposures to fix. Each fix raises your score right away.',
+      OverallStatus.urgent => 'Several exposures need attention. The fixes below are quick and your score will recover as you apply them.',
     };
-
     final details = <String>[
       if (blockedTotal > 0) 'Good news: $blockedTotal attempt(s) to track you or collect data were blocked.',
       if (left == 0) 'No personal information was found leaving your device.',
@@ -170,13 +232,17 @@ class ConsumerSummary {
     ];
     if (actions.isEmpty) actions.add('Nothing to do. Keep PrivacyWatch running and check back later.');
 
-    return ConsumerSummary._(score, status, items, t, trend, headline, details, actions.take(3).toList(),
-        blockedTotal, left, reasonings, ImpactSummary.build(events));
+    return ConsumerSummary._(shownScore, status, items, t, trend, headline, details, actions.take(3).toList(),
+        blockedTotal, left, reasonings, ImpactSummary.build(events), risk, assessment,
+        previousScore == null ? null : shownScore - previousScore,
+        {for (final e in events) if (e.tracker != null) e.host}.length,
+        {for (final e in events) if (e.tracker != null) e.host}.difference(previousTrackerHosts ?? {}).length);
   }
 }
 
 class ConsumerDashboard extends StatelessWidget {
-  const ConsumerDashboard(this.s, {super.key, required this.onChanged, this.wide = false});
+  const ConsumerDashboard(this.s, {super.key, required this.onChanged, required this.onRemediate, this.wide = false});
+  final void Function(List<Reasoning>) onRemediate; // block the destination and mark the finding handled
   final bool wide; // desktop-width two-column layout
   final VoidCallback onChanged;
   final ConsumerSummary s;
@@ -192,33 +258,75 @@ class ConsumerDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pending = s.reasonings.where((r) => r.needsAttention && !AckStore.instance.has(r.ackKey)).toList();
-    final acked = s.reasonings.where((r) => AckStore.instance.has(r.ackKey)).toList();
+    final active = {...s.critical, ...s.high, ...s.medium, ...s.low};
+    final others = s.reasonings.where((r) => !active.contains(r)).toList();
+    final fixable = s.critical.where((r) => r.impact.index <= Impact.low.index || r.impact == Impact.unknown).toList();
     final th = Theme.of(context).textTheme;
-    final c = s.status.color;
     final blocks = <String, Widget>{
-      'banner': ProtectionBanner(s),
-      'header': Card(
-        color: c.withValues(alpha: 0.12),
+      'exec': Card(
+        color: s.risk.color.withValues(alpha: 0.10),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(children: [
-            Text('${s.score}', style: th.displayMedium?.copyWith(color: c, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 4),
-            Text('/ 100', style: th.titleMedium),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(s.status.label, style: th.titleLarge?.copyWith(color: c, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(s.headline, style: th.bodyLarge),
-              ]),
-            ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(crossAxisAlignment: WrapCrossAlignment.end, spacing: 32, runSpacing: 10, children: [
+              _stat2('Privacy Score', '${s.score} / 100', th, big: true, color: s.status.color),
+              _stat2('Status', s.status.label, th, color: s.status.color),
+              _stat2('Change since last scan', s.scoreChangeText, th,
+                  color: (s.scoreDelta ?? 0) > 0 ? Colors.green.shade700 : (s.scoreDelta ?? 0) < 0 ? Colors.red.shade700 : null),
+              _stat2('Critical findings', '${s.critical.length}', th, big: true, color: s.critical.isEmpty ? Colors.green.shade700 : Risk.critical.color),
+            ]),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, children: [
+              _countChip('Critical', s.critical.length, Risk.critical.color),
+              _countChip('High', s.high.length, Risk.high.color),
+              _countChip('Medium', s.medium.length, Risk.medium.color),
+              _countChip('Low', s.low.length, Colors.blue),
+            ]),
+            const SizedBox(height: 8),
+            Text('Overall Risk: ${s.risk.label}. ${s.assessment}', style: th.bodyLarge),
+            Text(s.headline, style: th.bodyMedium),
+            if (fixable.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.build_circle),
+                  label: Text('Fix All Critical Issues (${fixable.length})'),
+                  onPressed: () => _fixAll(context, fixable),
+                ),
+              ),
+            if (s.critical.length > fixable.length)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('${s.critical.length - fixable.length} critical finding(s) may affect an app you use, so they need your confirmation one at a time.',
+                    style: th.bodySmall),
+              ),
+            const Divider(height: 24),
+            Wrap(spacing: 32, runSpacing: 8, children: [
+              _stat2('Exposure trend', s.exposureTrend, th),
+              _stat2('Trackers identified', '${s.trackerHosts}', th),
+              _stat2('New tracking detected', '${s.newTrackers}', th),
+            ]),
+            if (s.newTrackers > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                    'Additional trackers were discovered through analysis. Increased detection does not necessarily mean privacy has worsened.',
+                    style: th.bodySmall),
+              ),
+            if (s.blockedTotal > 0 && s.risk.index >= Risk.high.index)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('Blocked trackers and telemetry were also observed, but they are not the primary concern in this report.',
+                    style: th.bodySmall),
+              ),
           ]),
         ),
       ),
-      'happened': _section('What happened', th, [for (final d in s.details) _bullet(d, th)]),
-      'sensitive': _section('Your sensitive information', th, [
+      'critical': _fold('Critical findings', s.critical, th, context, open: true, empty: 'No critical findings. Nice work.'),
+      'high': _fold('High findings', s.high, th, context, open: s.critical.length < 3, empty: 'No high findings.'),
+      'medium': _fold('Medium findings', s.medium, th, context, empty: 'No medium findings.'),
+      'low': _fold('Low findings', [...s.low, ...others], th, context, empty: 'Nothing here.',
+          note: 'Includes low-confidence, blocked and acknowledged items.'),      'sensitive': _section('Your sensitive information', th, [
         for (final i in s.items)
           ListTile(
             dense: true,
@@ -292,110 +400,213 @@ class ConsumerDashboard extends StatelessWidget {
           Expanded(child: Text(s.trend, style: th.bodyLarge)),
         ]),
       ]),
-      'actions': _section('What you can do', th, [
-        for (var i = 0; i < s.actions.length; i++)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: CircleAvatar(radius: 12, child: Text('${i + 1}', style: const TextStyle(fontSize: 12))),
-            title: Text(s.actions[i]),
-          ),
-      ]),
-      'reasoning': _section('Explain the reasoning', th, [
-        Text(
-            'A detection is not a confirmation. For each finding we show why it was flagged and how sure we are.',
-            style: th.bodySmall),
-        if (s.reasonings.isEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text('Nothing was flagged.')),
-        if (pending.length > 1)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              icon: const Icon(Icons.done_all),
-              label: Text('Acknowledge all (${pending.length})'),
-              onPressed: () {
-                AckStore.instance.add(pending.map((r) => r.ackKey));
-                onChanged();
-              },
-            ),
-          ),
-        for (final r in s.reasonings.where((r) => !AckStore.instance.has(r.ackKey)).take(15)) _reasoningTile(r, th),
-        if (acked.isNotEmpty)
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            title: Text('Acknowledged (${acked.length})'),
-            children: [for (final r in acked) _reasoningTile(r, th)],
-          ),
-      ]),
-    };
+      'banner': s.risk.index <= Risk.medium.index ? ProtectionBanner(s) : const SizedBox.shrink(),
+      'protectedHead': Padding(
+        padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+        child: Text('Protected and blocked activity', style: th.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+      ),
+          };
     List<Widget> col(List<String> keys) => [for (final k in keys) blocks[k]!];
+    const order = ['critical', 'high', 'medium', 'low'];
+    const side = ['sensitive', 'protectedHead', 'banner', 'tracking', 'impact', 'trend'];
     if (!wide) {
-      return Column(crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: col(['banner', 'header', 'happened', 'sensitive', 'tracking', 'impact', 'trend', 'actions', 'reasoning']));
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(['exec', ...order, ...side]));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      blocks['banner']!,
-      blocks['header']!,
+      blocks['exec']!,
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(['happened', 'sensitive', 'tracking', 'trend']))),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(['actions', 'impact', 'reasoning']))),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(order))),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(side))),
       ]),
     ]);
   }
 
-  Widget _reasoningTile(Reasoning r, TextTheme th) {
-    final isAcked = AckStore.instance.has(r.ackKey);
-    Widget head(String t) => Padding(
-        padding: const EdgeInsets.only(top: 10, bottom: 2), child: Text(t, style: th.labelLarge));
-    Widget clues(List<Clue> l) => Column(
+  Widget _stat2(String label, String value, TextTheme th, {bool big = false, Color? color}) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [for (final c in l) Text(c.line, style: th.bodyMedium?.copyWith(color: c.found ? null : Colors.black54))]);
-    return ExpansionTile(
-      leading: r.needsAttention && !isAcked ? const Icon(Icons.circle, size: 10, color: Colors.red) : null,
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.only(bottom: 8),
-      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-      title: Text(r.title),
-      subtitle: Text('${r.blocked ? 'Blocked' : 'Sent'} | ${r.confidence}% ${r.confidenceBand} confidence | ${r.recommendation.label}'),
-      children: [
-        head('Raw detection'),
-        Text(r.raw),
-        head('Detection evidence'),
-        clues(r.evidence),
-        head('Context analysis'),
-        clues(r.context),
-        head('Confidence'),
-        Text('${r.confidence}% (${r.confidenceBand}) - rated ${r.severity.label}'),
-        head('Assessment'),
-        Text(r.assessment),
-        head('Recommended action: ${r.recommendation.label}'),
-        Text(r.action),
-        head('Functional impact: ${r.impact.label}'),
-        Text(r.impactText),
-        head('Why this action was recommended'),
-        for (final w in r.why) Text('• $w'),
-        if (r.needsAttention)
-          Align(
-            alignment: Alignment.centerRight,
-            child: isAcked
-                ? TextButton(
-                    onPressed: () {
-                      AckStore.instance.remove(r.ackKey);
-                      onChanged();
-                    },
-                    child: const Text('Undo acknowledge'))
-                : FilledButton.icon(
-                    icon: const Icon(Icons.check),
-                    label: const Text('Acknowledge'),
-                    onPressed: () {
-                      AckStore.instance.add([r.ackKey]);
-                      onChanged();
-                    },
-                  ),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: th.labelMedium),
+          Text(value, style: (big ? th.displaySmall : th.titleLarge)?.copyWith(fontWeight: FontWeight.bold, color: color)),
+        ],
+      );
+
+  static Color _sevColor(Reasoning r) => r.confidence >= 91
+      ? Risk.critical.color
+      : r.confidence >= 76
+          ? Risk.high.color
+          : r.confidence >= 51
+              ? Colors.amber.shade700
+              : Colors.blue;
+
+  Widget _fold(String title, List<Reasoning> list, TextTheme th, BuildContext context,
+          {bool open = false, required String empty, String? note}) =>
+      Card(
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: open,
+            title: Text('$title (${list.length})', style: th.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            children: [
+              if (note != null && list.isNotEmpty) Align(alignment: Alignment.centerLeft, child: Text(note, style: th.bodySmall)),
+              if (list.isEmpty) Align(alignment: Alignment.centerLeft, child: Text(empty)),
+              for (final r in list) _card(context, r, th),
+            ],
           ),
-      ],
+        ),
+      );
+
+  /// Compact card: severity + title, then the action and its buttons first.
+  Widget _card(BuildContext context, Reasoning r, TextTheme th) {
+    final acked = AckStore.instance.has(r.ackKey);
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      color: Theme.of(context).colorScheme.surface,
+      child: InkWell(
+        onTap: () => _details(context, r, th),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: _body(context, r, th, acked, compact: true),
+        ),
+      ),
     );
   }
 
+  Widget _body(BuildContext context, Reasoning r, TextTheme th, bool acked, {required bool compact, VoidCallback? done}) {
+    final canFix = r.isActive && r.recommendation.index >= RecommendedAction.restrict.index;
+    final done0 = done ?? () {};
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.circle, size: 12, color: r.blocked || acked ? Colors.grey : _sevColor(r)),
+        const SizedBox(width: 8),
+        Text('${r.severity.label.toUpperCase()}  ', style: th.labelLarge?.copyWith(color: _sevColor(r), fontWeight: FontWeight.bold)),
+        Expanded(child: Text(r.title, style: th.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+      ]),
+      const SizedBox(height: 6),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(6)),
+        child: Text('Recommended action: ${r.recommendation.label}. ${r.action}', style: th.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+      ),
+      const SizedBox(height: 6),
+      Wrap(spacing: 8, runSpacing: 4, children: [
+        if (canFix)
+          FilledButton.icon(
+              icon: const Icon(Icons.shield, size: 16),
+              onPressed: () {
+                _remediateOne(context, r);
+                done0();
+              },
+              label: const Text('Remediate Now')),
+        if (!r.blocked && !acked) ...[
+          OutlinedButton(
+              onPressed: () {
+                final keys = [
+                  for (final x in s.reasonings)
+                    if (x.app == r.app && x.isActive) x.ackKey
+                ];
+                AckStore.instance.add(keys);
+                done0();
+                onChanged();
+              },
+              child: const Text('Trust Application')),
+          OutlinedButton(
+              onPressed: () {
+                AckStore.instance.add([r.ackKey]);
+                done0();
+                onChanged();
+              },
+              child: const Text('Ignore')),
+        ] else
+          Chip(label: Text(r.blocked ? 'Blocked' : 'Acknowledged')),
+        if (acked)
+          TextButton(
+              onPressed: () {
+                AckStore.instance.remove(r.ackKey);
+                done0();
+                onChanged();
+              },
+              child: const Text('Undo')),
+      ]),
+      const SizedBox(height: 6),
+      Text(r.summaryLine, style: th.bodyMedium),
+      if (compact) Text('Tap for why this was flagged and details.', style: th.bodySmall),
+    ]);
+  }
+  Future<bool> _confirm(BuildContext context, String title, String body, String yes) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Text(title),
+          content: SizedBox(width: 460, child: Text(body)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: Text(yes)),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _remediateOne(BuildContext context, Reasoning r) async {
+    final risky = r.impact == Impact.medium || r.impact == Impact.high;
+    final ok = !risky ||
+        await _confirm(context, 'Block ${r.host}?', 'This may affect $r.app. ${r.impactText}', 'Block it');
+    if (ok) onRemediate([r]);
+  }
+
+  Future<void> _fixAll(BuildContext context, List<Reasoning> list) async {
+    final hosts = {for (final r in list) r.host}.join(', ');
+    final ok = await _confirm(
+        context,
+        'Fix ${list.length} critical issue(s)?',
+        'PrivacyWatch will block these destinations: $hosts. None of them is expected to break an app you use. '
+            'You can unblock any of them later from Blocked items.',
+        'Fix all');
+    if (ok) onRemediate(list);
+  }
+
+  Future<void> _details(BuildContext context, Reasoning r, TextTheme th) => showDialog<void>(
+        context: context,
+        builder: (c) {
+          final acked = AckStore.instance.has(r.ackKey);
+          Widget head(String t) =>
+              Padding(padding: const EdgeInsets.only(top: 10, bottom: 2), child: Text(t, style: th.labelLarge));
+          Widget clues(List<Clue> l) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [for (final k in l) Text(k.line, style: th.bodyMedium?.copyWith(color: k.found ? null : Colors.black54))]);
+          Widget fold(String t, List<Widget> kids) => ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text(t),
+              expandedCrossAxisAlignment: CrossAxisAlignment.start,
+              children: kids);
+          return AlertDialog(
+            content: SizedBox(
+              width: 600,
+              child: SingleChildScrollView(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _body(context, r, th, acked, compact: false, done: () => Navigator.pop(c)),
+                  head('Why this was flagged'),
+                  Text('${r.raw} Confidence ${r.confidence}% (${r.confidenceBand}). ${r.assessment}'),
+                  head('If you block it: functional impact ${r.impact.label}'),
+                  Text(r.impactText),
+                  const Divider(),
+                  fold('Evidence', [head('Detection evidence'), clues(r.evidence), head('Context analysis'), clues(r.context)]),
+                  fold('Technical details', [for (final w in r.why) Text('• $w'), Text('Destination: ${r.host}  |  App: ${r.app}')]),
+                  fold('Raw network activity', [for (final l in r.rawLines) SelectableText(l, style: th.bodySmall)]),
+                ]),
+              ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Close'))],
+          );
+        },
+      );
+  Widget _countChip(String label, int n, Color c) => Chip(
+        visualDensity: VisualDensity.compact,
+        backgroundColor: n > 0 ? c : Colors.black12,
+        label: Text('$label $n',
+            style: TextStyle(color: n > 0 ? Colors.white : Colors.black87, fontWeight: FontWeight.bold)),
+      );
   static String _time(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
@@ -404,11 +615,6 @@ class ConsumerDashboard extends StatelessWidget {
           Text('$n', style: th.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           Text(label, style: th.bodySmall, textAlign: TextAlign.center),
         ]),
-      );
-
-  Widget _bullet(String t, TextTheme th) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Text(t, style: th.bodyLarge),
       );
 
   Widget _stat(String label, int blocked, int seen, TextTheme th) => Expanded(
@@ -420,13 +626,14 @@ class ConsumerDashboard extends StatelessWidget {
       );
 
   Widget _section(String title, TextTheme th, List<Widget> children) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: th.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            ...children,
-          ]),
+        child: Theme(
+          data: ThemeData(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: title == 'Your sensitive information',
+            title: Text(title, style: th.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
         ),
-      );
-}
+      );}

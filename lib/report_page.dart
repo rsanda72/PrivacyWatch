@@ -8,6 +8,7 @@ import 'block_advice.dart';
 import 'traffic_trend.dart';
 import 'audit_view.dart';
 import 'consumer_summary.dart';
+import 'reasoning.dart';
 import 'core/app_blocker.dart';
 import 'core/audit_store.dart';
 import 'core/ack_store.dart';
@@ -184,7 +185,11 @@ class _ReportPageState extends State<ReportPage> {
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: wide ? 1500 : _maxWidth),
           child: ListView(padding: const EdgeInsets.all(12), children: [
-            ConsumerDashboard(wide: wide, onChanged: () => setState(() {}), ConsumerSummary.build(
+            ConsumerDashboard(wide: wide, onChanged: () => setState(() {}), onRemediate: _remediate, ConsumerSummary.build(
+              previousTrackerHosts: {
+                for (final i in AuditStore.instance.snapshots.firstOrNull?.items ?? const <AuditItem>[])
+                  if (i.category != null) i.host
+              },
               events: events,
               wasBlocked: _isBlocked,
               score: _scoreFor(_openNow),
@@ -301,6 +306,16 @@ class _ReportPageState extends State<ReportPage> {
   /// A destination counts as open when its traffic was not refused and it is not blocked now.
   bool _openNow(TransactionEvent e) => !_isBlocked(e) && !(widget.blocker?.isHostBlocked(e.host) ?? false);
 
+  void _remediate(List<Reasoning> list) {
+    for (final r in list) {
+      widget.blocker?.blockHost(r.host);
+    }
+    AckStore.instance.add([for (final r in list) r.ackKey]);
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Blocked ${{for (final r in list) r.host}.join(', ')}. You can undo this from Blocked items.')));
+  }
+
   int _scoreFor(bool Function(TransactionEvent) open) {
     final exposed = <String, Severity>{};
     final trackerHosts = <String>{};
@@ -313,7 +328,7 @@ class _ReportPageState extends State<ReportPage> {
     }
     final crit = exposed.values.where((s) => s == Severity.critical).length;
     final high = exposed.values.where((s) => s == Severity.high).length;
-    return (100 - (crit * 20).clamp(0, 60) - (high * 8).clamp(0, 20) - (trackerHosts.length * 2).clamp(0, 20)).clamp(0, 100);
+    return (100 - (crit * 20).clamp(0, 60) - (high * 8).clamp(0, 20)).clamp(0, 100);
   }
 
   /// The privacy state right now: every tracker or personal-data destination seen, and whether it is blocked.

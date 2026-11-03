@@ -49,7 +49,11 @@ class Reasoning {
     required this.impact,
     required this.impactText,
     required this.why,
+    this.unencrypted = false,
   });
+
+  final bool unencrypted; // sent over plain HTTP
+  List<String> rawLines = const []; // raw transactions behind this finding
 
   final RecommendedAction recommendation;
   final Impact impact;
@@ -80,9 +84,16 @@ class Reasoning {
                   ? Severity.low
                   : Severity.info;
 
+  /// One plain sentence on what this means for the user.
+  String get summaryLine => blocked
+      ? 'Stopped before it left your device.'
+      : 'Your ${(ReasoningEngine._noun[category] ?? 'personal data').replaceFirst('a ', '').replaceFirst('an ', '')} may have been sent to $host by $app.';
+
   String get ackKey => AckStore.key(category.name, app, host);
 
   /// Medium or above and actually sent: the kind of finding that should be acknowledged.
+  bool get isActive => !blocked && !AckStore.instance.has(ackKey);
+
   bool get needsAttention => !blocked && confidence >= 51;
 
   String get title => '${category.label} - $app';
@@ -165,7 +176,11 @@ class ReasoningEngine {
         cats[key] = c;
       }
     }
-    final out = [for (final g in groups.entries) analyze(cats[g.key]!, g.value, wasBlocked, all: events)];
+    final out = [
+      for (final g in groups.entries)
+        analyze(cats[g.key]!, g.value, wasBlocked, all: events)
+          ..rawLines = [for (final e in g.value.take(25)) '${e.time.toIso8601String()} | ${e.how} | ${e.destination}']
+    ];
     out.sort((a, b) => b.confidence.compareTo(a.confidence));
     return out;
   }
@@ -357,6 +372,7 @@ class ReasoningEngine {
       impact: impact,
       impactText: impactText,
       why: why,
+      unencrypted: !first.encrypted && !blocked,
     );
   }
 }
