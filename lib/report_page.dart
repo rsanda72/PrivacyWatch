@@ -181,11 +181,20 @@ class _ReportPageState extends State<ReportPage> {
       ]),
       body: LayoutBuilder(builder: (context, box) {
         final wide = box.maxWidth >= 900;
+        final tech = Card(child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                title: const Text('Technical details'),
+                subtitle: const Text('For advanced users: destinations, apps and traffic'),
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                children: [_technicalDetails(a, topCat, false)],
+              ),
+            ));
         return Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: wide ? 1500 : _maxWidth),
           child: ListView(padding: const EdgeInsets.all(12), children: [
-            ConsumerDashboard(wide: wide, onChanged: () => setState(() {}), onRemediate: _remediate, ConsumerSummary.build(
+            ConsumerDashboard(wide: wide, technical: wide ? tech : null, onChanged: () => setState(() {}), onRemediate: _remediate, ConsumerSummary.build(
               previousTrackerHosts: {
                 for (final i in AuditStore.instance.snapshots.firstOrNull?.items ?? const <AuditItem>[])
                   if (i.category != null) i.host
@@ -196,15 +205,8 @@ class _ReportPageState extends State<ReportPage> {
               previousScore: AuditStore.instance.snapshots.firstOrNull?.score,
             )),
             const SizedBox(height: 8),
-            Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                title: const Text('Technical details'),
-                subtitle: const Text('For advanced users: destinations, apps and traffic'),
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                children: [_technicalDetails(a, topCat, wide)],
-              ),
-            ),
+            if (!wide) const SizedBox(height: 0),
+            if (!wide) tech,
           ]),
         ),
       );}),
@@ -438,19 +440,7 @@ class _ReportPageState extends State<ReportPage> {
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            SizedBox(
-              width: 64,
-              height: 64,
-              child: Stack(alignment: Alignment.center, children: [
-                CircularProgressIndicator(
-                  value: score / 100,
-                  strokeWidth: 7,
-                  color: color,
-                  backgroundColor: color.withValues(alpha: 0.15),
-                ),
-                Text('$score', style: theme.textTheme.titleLarge?.copyWith(color: color, fontWeight: FontWeight.bold)),
-              ]),
-            ),
+            Text('$score', style: theme.textTheme.displaySmall?.copyWith(color: color, fontWeight: FontWeight.bold)),
             const SizedBox(width: 14),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

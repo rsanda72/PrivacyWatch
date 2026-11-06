@@ -241,7 +241,8 @@ class ConsumerSummary {
 }
 
 class ConsumerDashboard extends StatelessWidget {
-  const ConsumerDashboard(this.s, {super.key, required this.onChanged, required this.onRemediate, this.wide = false});
+  const ConsumerDashboard(this.s, {super.key, required this.onChanged, required this.onRemediate, this.wide = false, this.technical});
+  final Widget? technical; // full-width technical details card, shown under the score and shield on wide screens
   final void Function(List<Reasoning>) onRemediate; // block the destination and mark the finding handled
   final bool wide; // desktop-width two-column layout
   final VoidCallback onChanged;
@@ -263,7 +264,7 @@ class ConsumerDashboard extends StatelessWidget {
     final fixable = s.critical.where((r) => r.impact.index <= Impact.low.index || r.impact == Impact.unknown).toList();
     final th = Theme.of(context).textTheme;
     final blocks = <String, Widget>{
-      'exec': Card(
+      'exec': _pair(Card(
         color: s.risk.color.withValues(alpha: 0.10),
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -321,7 +322,7 @@ class ConsumerDashboard extends StatelessWidget {
               ),
           ]),
         ),
-      ),
+      )),
       'critical': _fold('Critical findings', s.critical, th, context, open: true, empty: 'No critical findings. Nice work.'),
       'high': _fold('High findings', s.high, th, context, open: s.critical.length < 3, empty: 'No high findings.'),
       'medium': _fold('Medium findings', s.medium, th, context, empty: 'No medium findings.'),
@@ -408,7 +409,7 @@ class ConsumerDashboard extends StatelessWidget {
           };
     List<Widget> col(List<String> keys) => [for (final k in keys) blocks[k]!];
     const order = ['critical', 'high', 'medium', 'low'];
-    const side = ['sensitive', 'protectedHead', 'banner', 'tracking', 'impact', 'trend'];
+    final side = ['sensitive', 'protectedHead', if (!wide) 'banner', 'tracking', 'impact', 'trend'];
     if (!wide) {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(['exec', ...order, ...side]));
     }
@@ -418,6 +419,27 @@ class ConsumerDashboard extends StatelessWidget {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(order))),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: col(side))),
       ]),
+    ]);
+  }
+
+  /// On wide screens the shield status sits beside the score as its own card.
+  /// Wide screens: shield beside the score (equal height), technical details full width below them.
+  /// The expandable card sits outside the equal-height row so expanding it cannot break layout.
+  Widget _pair(Widget main) {
+    if (!wide) return main;
+    final shield = s.risk.index <= Risk.medium.index;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (shield)
+        IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Expanded(flex: 3, child: main),
+            const SizedBox(width: 16),
+            Expanded(flex: 2, child: ProtectionBanner(s)),
+          ]),
+        )
+      else
+        main,
+      ?technical,
     ]);
   }
 

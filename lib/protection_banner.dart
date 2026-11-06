@@ -4,7 +4,8 @@ import 'consumer_summary.dart';
 
 /// Hero banner: animated shield, protection state, blocked count and per-data-type checks.
 class ProtectionBanner extends StatefulWidget {
-  const ProtectionBanner(this.s, {super.key});
+  const ProtectionBanner(this.s, {super.key, this.embedded = false});
+  final bool embedded; // no card of its own, for use inside another banner
   final ConsumerSummary s;
 
   @override
@@ -51,12 +52,7 @@ class _ProtectionBannerState extends State<ProtectionBanner> with SingleTickerPr
       );
     }
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      color: color.withValues(alpha: 0.10),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Wrap(
+    final content = Wrap(
           alignment: WrapAlignment.center,
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 24,
@@ -86,8 +82,12 @@ class _ProtectionBannerState extends State<ProtectionBanner> with SingleTickerPr
                   style: th.bodyMedium),
             ]),
           ],
-        ),
-      ),
+      );
+    if (widget.embedded) return content;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      color: color.withValues(alpha: 0.10),
+      child: Padding(padding: const EdgeInsets.all(16), child: content),
     );
   }
 }
